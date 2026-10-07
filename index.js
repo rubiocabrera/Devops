@@ -117,7 +117,7 @@ app.delete('/api/publicaciones/:id', (req, res) => {
 
 // 8. GET - Estado del Servidor
 app.get('/api/status', (req, res) => {
-  formatResp(res, 200, { status: 'Online', mensaje: 'Demo en vivo: pipeline CI/CD funcionando', timestamp: new Date() });
+  formatResp(res, 200, { status: 'Online', mensaje: 'Diego gei', timestamp: new Date() });
 });
 
 // 9. POST - Backup de la Base de Datos
