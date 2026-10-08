@@ -68,6 +68,13 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
+            echo "--- Espacio en disco antes de limpiar ---"
+            df -h /
+            echo "--- Limpiando imagenes y cache de Docker no usados ---"
+            sudo docker system prune -af --volumes
+            echo "--- Espacio en disco despues de limpiar ---"
+            df -h /
             sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/webapp:latest
             sudo docker stop webapp-container || true
             sudo docker rm webapp-container || true
