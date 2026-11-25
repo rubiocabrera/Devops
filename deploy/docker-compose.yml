@@ -7,8 +7,16 @@
 # Variables (archivo .env junto a este compose, lo genera el pipeline):
 #   DOCKERHUB_USERNAME, IMAGE_TAG, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD,
 #   O2_USER, O2_PASSWORD, O2_AUTH (base64 de "usuario:password")
+# Logs de Docker con tamaño máximo (disco pequeño)
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "2"
+
 services:
   openobserve:
+    logging: *logging
     image: public.ecr.aws/zinclabs/openobserve@sha256:896361d533cac56ef346d940b1ddd6664e04d5f9606bd80b4a2e28069a33020e
     container_name: openobserve
     restart: unless-stopped
@@ -22,11 +30,14 @@ services:
       ZO_MEMORY_CACHE_MAX_SIZE: "128"
       ZO_MEMORY_CACHE_DATAFUSION_MAX_SIZE: "128"
       ZO_TELEMETRY: "false"
+      # Disco de 8 GB: conservar solo 7 días de datos
+      ZO_COMPACT_DATA_RETENTION_DAYS: "7"
     volumes:
       - ./data/openobserve:/data
     mem_limit: 450m
 
   otel-collector:
+    logging: *logging
     image: otel/opentelemetry-collector-contrib:0.166.0
     container_name: otel-collector
     restart: unless-stopped
@@ -45,6 +56,7 @@ services:
     mem_limit: 150m
 
   temp-exporter:
+    logging: *logging
     image: curlimages/curl:8.17.0
     container_name: temp-exporter
     restart: unless-stopped
@@ -62,6 +74,7 @@ services:
     mem_limit: 30m
 
   webapp:
+    logging: *logging
     image: ${DOCKERHUB_USERNAME}/webapp:${IMAGE_TAG:-latest}
     container_name: webapp-container
     restart: unless-stopped
