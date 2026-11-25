@@ -61,6 +61,7 @@ jobs:
 
       - name: Registrar resultado de pruebas en OpenObserve
         if: always()
+        timeout-minutes: 2
         run: node scripts/notify-openobserve.js tests "${{ job.status }}"
 
       - name: Registrar despliegue bloqueado en OpenObserve
@@ -215,13 +216,19 @@ jobs:
       - name: Aprovisionar dashboards y alertas en OpenObserve
         if: success()
         continue-on-error: true
+        timeout-minutes: 6
         run: |
-          for i in $(seq 1 30); do
-            curl -fs "$O2_URL/healthz" >/dev/null && break
-            echo "Esperando a OpenObserve..."; sleep 5
+          for i in $(seq 1 24); do
+            curl -fs -m 5 "$O2_URL/healthz" >/dev/null && break
+            echo "Esperando a OpenObserve en $O2_URL ..."; sleep 5
           done
+          if ! curl -fs -m 5 "$O2_URL/healthz" >/dev/null; then
+            echo "::error::OpenObserve no responde en el puerto 5080. Revisa que el Security Group de EC2 permita el puerto 5080."
+            exit 1
+          fi
           node deploy/provision-openobserve.js
 
       - name: Registrar evento de despliegue en OpenObserve
         if: always()
+        timeout-minutes: 2
         run: node scripts/notify-openobserve.js deploy "${{ job.status }}" "Despliegue de ${{ github.sha }} en EC2"

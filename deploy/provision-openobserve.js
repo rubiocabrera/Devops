@@ -12,6 +12,7 @@ async function o2(method, path, body) {
     method,
     headers: { Authorization: AUTH, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(20000),
   });
   const text = await res.text();
   let json;
