@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registro | WebApp DevOps</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="center">
+    <form class="card" id="register-form" data-testid="register-form" novalidate>
+      <h1>Crear cuenta</h1>
+      <p class="sub">Regístrate para acceder al sistema</p>
+      <label for="nombre">Nombre completo</label>
+      <input id="nombre" name="nombre" type="text" autocomplete="name" required data-testid="register-nombre">
+      <label for="email">Correo electrónico</label>
+      <input id="email" name="email" type="email" autocomplete="email" required data-testid="register-email">
+      <label for="password">Contraseña (mínimo 6 caracteres)</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" required data-testid="register-password">
+      <label for="confirm">Confirmar contraseña</label>
+      <input id="confirm" name="confirm" type="password" autocomplete="new-password" required data-testid="register-confirm">
+      <button type="submit" class="full" data-testid="register-submit">Registrarme</button>
+      <div class="alert" id="register-alert" role="alert" data-testid="register-alert"></div>
+      <p class="foot">¿Ya tienes cuenta? <a href="/index.html" data-testid="go-login">Inicia sesión</a></p>
+    </form>
+  </div>
+  <script src="/app.js"></script>
+  <script>
+    const form = document.getElementById('register-form');
+    const alertBox = document.getElementById('register-alert');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nombre = form.nombre.value.trim();
+      const email = form.email.value.trim();
+      const password = form.password.value;
+      if (!nombre || !email || !password) return showAlert(alertBox, 'Todos los campos son obligatorios');
+      if (password !== form.confirm.value) return showAlert(alertBox, 'Las contraseñas no coinciden');
+      const res = await apiFetch('/api/auth/register', { method: 'POST', body: { nombre, email, password }, auth: false });
+      if (!res.ok) return showAlert(alertBox, res.data || 'No se pudo registrar');
+      session.save(res.data);
+      window.location.href = '/usuarios.html';
+    });
+  </script>
+</body>
+</html>

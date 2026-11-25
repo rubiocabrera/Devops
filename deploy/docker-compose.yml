@@ -1,0 +1,86 @@
+# Stack completo en la instancia EC2:
+#   webapp          -> API + frontend (puerto 80), instrumentada con OpenTelemetry
+#   otel-collector  -> recibe OTLP de la app + métricas del host (CPU, RAM, red, disco)
+#   temp-exporter   -> lee sensores de temperatura del host y los envía a OpenObserve
+#   openobserve     -> plataforma de observabilidad (UI en el puerto 5080)
+#
+# Variables (archivo .env junto a este compose, lo genera el pipeline):
+#   DOCKERHUB_USERNAME, IMAGE_TAG, JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD,
+#   O2_USER, O2_PASSWORD, O2_AUTH (base64 de "usuario:password")
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve@sha256:896361d533cac56ef346d940b1ddd6664e04d5f9606bd80b4a2e28069a33020e
+    container_name: openobserve
+    restart: unless-stopped
+    ports:
+      - "5080:5080"
+    environment:
+      ZO_ROOT_USER_EMAIL: ${O2_USER}
+      ZO_ROOT_USER_PASSWORD: ${O2_PASSWORD}
+      ZO_DATA_DIR: /data
+      # Límites de memoria para una t3.micro (1 GB de RAM)
+      ZO_MEMORY_CACHE_MAX_SIZE: "128"
+      ZO_MEMORY_CACHE_DATAFUSION_MAX_SIZE: "128"
+      ZO_TELEMETRY: "false"
+    volumes:
+      - ./data/openobserve:/data
+    mem_limit: 450m
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.166.0
+    container_name: otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    # Red del host: así las métricas de red (ancho de banda) son las de la
+    # instancia EC2 y no las de la red virtual del contenedor.
+    network_mode: host
+    environment:
+      O2_AUTH: ${O2_AUTH}
+      HOST_NAME: ${HOST_NAME:-ec2-webapp}
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+      - /:/hostfs:ro
+    depends_on:
+      - openobserve
+    mem_limit: 150m
+
+  temp-exporter:
+    image: curlimages/curl:8.17.0
+    container_name: temp-exporter
+    restart: unless-stopped
+    user: "0"
+    entrypoint: ["/bin/sh", "/temperature.sh"]
+    environment:
+      O2_URL: http://openobserve:5080
+      O2_AUTH: ${O2_AUTH}
+      HOST_NAME: ${HOST_NAME:-ec2-webapp}
+    volumes:
+      - ./temperature.sh:/temperature.sh:ro
+      - /sys/class:/host/sys/class:ro
+    depends_on:
+      - openobserve
+    mem_limit: 30m
+
+  webapp:
+    image: ${DOCKERHUB_USERNAME}/webapp:${IMAGE_TAG:-latest}
+    container_name: webapp-container
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "6061:6061"
+    environment:
+      NODE_ENV: production
+      APP_VERSION: ${IMAGE_TAG:-latest}
+      DB_PATH: /app/data/database.db
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      OTEL_SERVICE_NAME: webapp-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/app:/app/data
+    depends_on:
+      - otel-collector
+    mem_limit: 200m

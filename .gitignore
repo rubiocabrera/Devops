@@ -28,3 +28,12 @@ npm-debug.log
 # Carpeta de trabajo de Claude Code (no es parte del proyecto)
 .claude/
 .scratch_report/
+
+# Artefactos de Playwright
+playwright-report/
+test-results/
+blob-report/
+
+# Variables del stack en el servidor
+deploy/.env
+deploy/data/

@@ -1,101 +1,99 @@
-# Pipeline CI/CD Automatizado para API REST con Docker, GitHub Actions y AWS EC2
+# CI/CD con pruebas automatizadas y observabilidad (GitHub Actions + Playwright + OpenObserve + AWS EC2)
 
-API REST en Node.js/Express con base de datos SQLite, contenerizada con Docker y desplegada automáticamente en una instancia de AWS EC2 mediante un pipeline de integración y despliegue continuo construido con GitHub Actions.
+Sistema web con **Login, Register y CRUD de usuarios** (Node.js/Express + SQLite + JWT), desplegado en AWS EC2 con un pipeline de GitHub Actions. El pipeline **solo despliega si pasan todas las pruebas** (Jest + Playwright) y registra cada ejecución en **OpenObserve**. La aplicación está instrumentada con **OpenTelemetry (OTLP)** y envía logs, métricas y trazas. Además, el servidor reporta CPU, RAM, ancho de banda, disco y temperatura.
 
-- **API pública**: http://100.22.29.28/api/status
-- **Imagen en Docker Hub**: https://hub.docker.com/r/skondit01/webapp
-- **Pipeline (Actions)**: https://github.com/rubiocabrera/Devops/actions
+- **Aplicación**: `http://<EC2_HOST>/`
+- **OpenObserve**: `http://<EC2_HOST>:5080/`
+- **Pipeline**: https://github.com/rubiocabrera/Devops/actions
 
 ## Arquitectura
 
 ```
-┌─────────────┐   push a main   ┌──────────────────┐
-│  Repositorio │ ───────────────▶│   GitHub Actions  │
-│   (GitHub)   │                 │   (main.yml)       │
-└─────────────┘                 └─────────┬─────────┘
-                                           │
-                        ┌──────────────────┼──────────────────┐
-                        ▼                  ▼                  ▼
-                 1. Tests y          2. Build y          3. Desplegar
-                    cobertura           publicar en          en AWS EC2
-                    (Jest/Supertest)    Docker Hub           (SSH)
-                                        (:latest, :sha)
-                                                                 │
-                                                                 ▼
-                                                      ┌─────────────────────┐
-                                                      │   AWS EC2 (Ubuntu)   │
-                                                      │  docker pull + run   │
-                                                      │   puerto 80 (HTTP)   │
-                                                      └─────────────────────┘
+ push a main ─▶ GitHub Actions
+                 │
+                 ├─ 1. Pruebas ── Jest (backend) + Playwright (UI + API)
+                 │        │  └─▶ OpenObserve: evento "tests" (éxito/fallo, commit, rama, usuario)
+                 │        └─ si falla ─▶ evento "deploy: blocked" y NO hay conexión SSH a EC2
+                 │
+                 ├─ 2. Build ──── imagen Docker → Docker Hub (:latest y :sha)
+                 │
+                 └─ 3. Deploy ─── SSH a EC2 → docker compose up
+                          └─▶ OpenObserve: evento "deploy" + aprovisiona dashboards/alertas
+
+ AWS EC2 (Docker Compose)
+ ┌──────────────┐ OTLP  ┌────────────────┐  OTLP/HTTP  ┌─────────────┐
+ │ webapp :80   │──────▶│ otel-collector │────────────▶│ OpenObserve │
+ │ (API + UI)   │       │ + hostmetrics  │             │   :5080     │
+ └──────────────┘       └────────────────┘             └─────────────┘
+ ┌──────────────┐  JSON (temperatura)                         ▲
+ │ temp-exporter│─────────────────────────────────────────────┘
+ └──────────────┘
 ```
 
-El pipeline (`.github/workflows/main.yml`) se activa en cada `push` o `pull_request` a la rama `main` y ejecuta tres jobs en cadena:
+## Funcionalidad
 
-1. **Tests y cobertura** — instala dependencias y corre la suite completa de pruebas (Jest + Supertest) con un umbral mínimo de cobertura del 70%.
-2. **Build y publicar en Docker Hub** — solo en `push` a `main`; construye la imagen con Docker Buildx (usando caché de capas de GitHub Actions) y la publica con las etiquetas `:latest` y `:${{ github.sha }}`.
-3. **Desplegar en AWS EC2** — se conecta por SSH a la instancia, limpia imágenes de Docker no usadas, descarga la imagen más reciente, detiene el contenedor anterior y levanta uno nuevo en el puerto 80.
+| Página | Descripción |
+|---|---|
+| `/` (index.html) | Login |
+| `/register.html` | Registro de usuario |
+| `/usuarios.html` | CRUD de usuarios (requiere sesión) |
 
-## Endpoints principales
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| POST | `/api/auth/register` | — | Registro (bcrypt) → devuelve JWT |
+| POST | `/api/auth/login` | — | Login → devuelve JWT |
+| GET | `/api/auth/me` | JWT | Usuario de la sesión |
+| GET/POST | `/api/usuarios` | JWT | Listar / crear usuarios |
+| GET/PUT/DELETE | `/api/usuarios/:id` | JWT | Leer / actualizar / eliminar |
+| GET | `/api/status` | — | Estado del servidor |
+| ... | `/api/publicaciones`, `/api/admin/*` | — | Endpoints heredados |
 
-Todas las respuestas siguen el esquema `{ statusCode, data }`.
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/status` | Estado del servidor |
-| GET | `/api/usuarios` | Lista de usuarios |
-| GET | `/api/usuarios/:id` | Usuario por id |
-| POST | `/api/usuarios` | Crear usuario |
-| PUT | `/api/usuarios/:id` | Actualizar usuario |
-| DELETE | `/api/usuarios/:id` | Eliminar usuario |
-| GET | `/api/publicaciones` | Lista de publicaciones |
-| POST | `/api/publicaciones` | Crear publicación |
-| PUT | `/api/publicaciones/:id` | Actualizar publicación |
-| DELETE | `/api/publicaciones/:id` | Eliminar publicación |
-| POST | `/api/admin/backup` | Respaldo de la base de datos |
-| POST | `/api/admin/clear` | Vaciar la base de datos |
-
-## Comandos locales
+## Pruebas
 
 ```bash
-# Instalar dependencias
 npm install
-
-# Correr el servidor localmente (puerto 80 por defecto)
-node index.js
-
-# Correr las pruebas
-npm test
-
-# Correr las pruebas con reporte de cobertura
-npm run test:coverage
-
-# Construir la imagen Docker
-docker build -t webapp:latest .
-
-# Correr el contenedor localmente
-docker run -d -p 8080:80 --name webapp-container webapp:latest
+npm test                 # Jest: 72 pruebas (integración, unitarias con mocks, auth, TCP)
+npx playwright install chromium
+npm run test:e2e         # Playwright: 21 pruebas (10 API + 11 UI)
 ```
 
-## Configuración del pipeline (GitHub Secrets)
+Playwright levanta la app automáticamente con una BD en memoria. Para probar contra un servidor ya desplegado: `E2E_BASE_URL=http://<host> npx playwright test`.
 
-Para que el workflow funcione en un fork o repositorio nuevo, se deben configurar estos *repository secrets* en **Settings → Secrets and variables → Actions**:
+## Observabilidad (OpenTelemetry → OpenObserve)
+
+- **Trazas**: spans HTTP (auto-instrumentación http/express) + un span por cada consulta SQLite (`sqlite SELECT`, `sqlite INSERT`, ...), con `db.statement`.
+- **Métricas**: `http_requests_total`, `http_errors_total` y `http_request_duration_ms` por `http.route`, `http.method` y `http.status_code`, más métricas de runtime de Node.
+- **Logs**: eventos estructurados (`http_request`, `auth_login_ok`, `auth_login_failed`, `unhandled_exception`, ...) correlacionados con `trace_id`.
+- **Infraestructura**: `hostmetrics` del OTel Collector (CPU, RAM, red, disco, load average) y `temp-exporter` (temperatura desde `/sys/class/thermal` y `hwmon`).
+- **CI/CD**: stream `cicd_pipeline` con cada ejecución de pruebas y despliegue.
+
+Dashboards (los crea `deploy/provision-openobserve.js` en cada deploy):
+0. Resumen general (pipeline + trazas + recursos de EC2)
+1. Aplicación: endpoints (latencia, RPS, errores, logs, trazas)
+2. Infraestructura EC2 (CPU, RAM, ancho de banda, temperatura, disco)
+3. CI/CD: GitHub Actions
+
+Alertas: `api_tasa_errores_5xx`, `api_latencia_alta`, `ec2_cpu_alta`, `ec2_ram_alta` y `cicd_pruebas_fallidas`.
+
+## Configuración (GitHub Secrets)
 
 | Secret | Descripción |
 |---|---|
-| `DOCKERHUB_USERNAME` | Usuario de Docker Hub |
-| `DOCKERHUB_TOKEN` | Personal Access Token de Docker Hub (permisos Read & Write) |
-| `EC2_HOST` | IP pública (o Elastic IP) de la instancia EC2 |
-| `EC2_SSH_KEY` | Contenido completo de la llave privada `.pem` usada para conectarse a la EC2 |
+| `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` | Docker Hub |
+| `EC2_HOST` | IP pública (Elastic IP) de la instancia |
+| `EC2_SSH_KEY` | Contenido de la llave `.pem` |
+| `O2_USER` / `O2_PASSWORD` | Usuario raíz de OpenObserve (email y contraseña) |
+| `JWT_SECRET` | Secreto para firmar los JWT |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Usuario administrador inicial de la app |
 
-Ningún dato sensible se incluye en el código del repositorio; todos se gestionan exclusivamente mediante estos Secrets.
+Security Group de EC2: puertos de entrada 22 (SSH), 80 (app) y 5080 (OpenObserve).
 
-## Infraestructura en AWS EC2
+## Ejecutar el stack localmente
 
-- Ubuntu Server 24.04 LTS, instancia `t3.micro` (Free Tier).
-- Docker Engine instalado.
-- Security Group con reglas de entrada para el puerto 22 (SSH) y el puerto 80 (HTTP), origen `0.0.0.0/0`.
-- IP Elástica asociada para que la dirección pública no cambie entre reinicios.
-
-## Pruebas automatizadas
-
-58 pruebas con Jest y Supertest, distribuidas en tres suites (integración, unitarias con mocks, y protocolo TCP complementario), con 91.5% de cobertura de statements. Ver el reporte del proyecto (PDF) para el detalle completo.
+```bash
+docker build -t local/webapp:latest .
+cd deploy
+# crear .env con DOCKERHUB_USERNAME=local, O2_USER, O2_PASSWORD, O2_AUTH=base64(user:pass), JWT_SECRET...
+docker compose up -d
+O2_URL=http://localhost:5080 O2_USER=... O2_PASSWORD=... node provision-openobserve.js
+```

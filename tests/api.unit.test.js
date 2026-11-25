@@ -12,6 +12,7 @@ process.env.DB_PATH = UNIT_DB_PATH;
 
 const request = require('supertest');
 const { app, db } = require('../index');
+const api = require('./helpers/authedRequest')(app);
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -42,7 +43,7 @@ const mockAll = (implementation) =>
 // ==========================================================================
 describe('[UNIT] GET /api/status', () => {
   test('responde 200 sin consultar la base de datos', async () => {
-    const res = await request(app).get('/api/status');
+    const res = await api.get('/api/status');
     expect(res.status).toBe(200);
     expectSchema(res.body);
     expect(res.body.data.status).toBe('Online');
@@ -57,7 +58,7 @@ describe('[UNIT] POST /api/usuarios', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ lastID: 42 }, null);
     });
-    const res = await request(app)
+    const res = await api
       .post('/api/usuarios')
       .send({ nombre: 'Mock User', email: 'mock@example.com' });
     expect(res.status).toBe(200);
@@ -68,7 +69,7 @@ describe('[UNIT] POST /api/usuarios', () => {
     mockRun(function (sql, params, cb) {
       cb.call({}, new Error('SQLITE_CONSTRAINT: UNIQUE constraint failed: usuarios.email'));
     });
-    const res = await request(app)
+    const res = await api
       .post('/api/usuarios')
       .send({ nombre: 'Mock User', email: 'mock@example.com' });
     expect(res.status).toBe(400);
@@ -86,14 +87,14 @@ describe('[UNIT] GET /api/usuarios', () => {
       { id: 2, nombre: 'Mock B', email: 'b@mock.com' },
     ];
     mockAll((sql, params, cb) => cb(null, usuariosMock));
-    const res = await request(app).get('/api/usuarios');
+    const res = await api.get('/api/usuarios');
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual(usuariosMock);
   });
 
   test('escenario de fallo con datos mockup: db.all simula un error del motor', async () => {
     mockAll((sql, params, cb) => cb(new Error('database is locked')));
-    const res = await request(app).get('/api/usuarios');
+    const res = await api.get('/api/usuarios');
     expect(res.status).toBe(500);
     expectSchema(res.body);
   });
@@ -105,14 +106,14 @@ describe('[UNIT] GET /api/usuarios', () => {
 describe('[UNIT] GET /api/usuarios/:id', () => {
   test('caso de éxito con datos mockup: db.get devuelve un usuario simulado', async () => {
     mockGet((sql, params, cb) => cb(null, { id: 7, nombre: 'Mock Get', email: 'get@mock.com' }));
-    const res = await request(app).get('/api/usuarios/7');
+    const res = await api.get('/api/usuarios/7');
     expect(res.status).toBe(200);
     expect(res.body.data.nombre).toBe('Mock Get');
   });
 
   test('escenario de fallo con datos mockup: db.get simula que el id no existe', async () => {
     mockGet((sql, params, cb) => cb(null, undefined));
-    const res = await request(app).get('/api/usuarios/999999');
+    const res = await api.get('/api/usuarios/999999');
     expect(res.status).toBe(200);
     expect(res.body.data).toBeNull();
   });
@@ -126,13 +127,13 @@ describe('[UNIT] PUT /api/usuarios/:id', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ changes: 1 }, null);
     });
-    const res = await request(app).put('/api/usuarios/7').send({ nombre: 'Actualizado Mock' });
+    const res = await api.put('/api/usuarios/7').send({ nombre: 'Actualizado Mock' });
     expect(res.status).toBe(200);
     expect(res.body.data.updatedRows).toBe(1);
   });
 
   test('escenario de fallo: usuario no manda ningún campo (no llega a tocar la BD)', async () => {
-    const res = await request(app).put('/api/usuarios/7').send({});
+    const res = await api.put('/api/usuarios/7').send({});
     expect(res.status).toBe(400);
     expectSchema(res.body);
   });
@@ -141,7 +142,7 @@ describe('[UNIT] PUT /api/usuarios/:id', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ changes: 0 }, null);
     });
-    const res = await request(app).put('/api/usuarios/999999').send({ nombre: 'Fantasma' });
+    const res = await api.put('/api/usuarios/999999').send({ nombre: 'Fantasma' });
     expect(res.status).toBe(200);
     expect(res.body.data.updatedRows).toBe(0);
   });
@@ -155,7 +156,7 @@ describe('[UNIT] DELETE /api/usuarios/:id', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ changes: 1 }, null);
     });
-    const res = await request(app).delete('/api/usuarios/7');
+    const res = await api.delete('/api/usuarios/7');
     expect(res.status).toBe(200);
     expect(res.body.data.deletedRows).toBe(1);
   });
@@ -164,7 +165,7 @@ describe('[UNIT] DELETE /api/usuarios/:id', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ changes: 0 }, null);
     });
-    const res = await request(app).delete('/api/usuarios/7');
+    const res = await api.delete('/api/usuarios/7');
     expect(res.status).toBe(200);
     expect(res.body.data.deletedRows).toBe(0);
   });
@@ -178,7 +179,7 @@ describe('[UNIT] POST /api/publicaciones', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ lastID: 100 }, null);
     });
-    const res = await request(app)
+    const res = await api
       .post('/api/publicaciones')
       .send({ usuario_id: 7, titulo: 'Título mockup' });
     expect(res.status).toBe(200);
@@ -186,7 +187,7 @@ describe('[UNIT] POST /api/publicaciones', () => {
   });
 
   test('escenario de fallo: usuario no manda título (no llega a tocar la BD)', async () => {
-    const res = await request(app).post('/api/publicaciones').send({ usuario_id: 7 });
+    const res = await api.post('/api/publicaciones').send({ usuario_id: 7 });
     expect(res.status).toBe(400);
     expectSchema(res.body);
   });
@@ -199,7 +200,7 @@ describe('[UNIT] GET /api/publicaciones', () => {
   test('caso de éxito con datos mockup: db.all devuelve un arreglo simulado', async () => {
     const publicacionesMock = [{ id: 1, usuario_id: 7, titulo: 'Mock Post' }];
     mockAll((sql, params, cb) => cb(null, publicacionesMock));
-    const res = await request(app).get('/api/publicaciones');
+    const res = await api.get('/api/publicaciones');
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual(publicacionesMock);
   });
@@ -213,13 +214,13 @@ describe('[UNIT] PUT /api/publicaciones/:id', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ changes: 1 }, null);
     });
-    const res = await request(app).put('/api/publicaciones/1').send({ titulo: 'Nuevo título' });
+    const res = await api.put('/api/publicaciones/1').send({ titulo: 'Nuevo título' });
     expect(res.status).toBe(200);
     expect(res.body.data.updatedRows).toBe(1);
   });
 
   test('escenario de fallo: usuario no manda título (no llega a tocar la BD)', async () => {
-    const res = await request(app).put('/api/publicaciones/1').send({});
+    const res = await api.put('/api/publicaciones/1').send({});
     expect(res.status).toBe(400);
     expectSchema(res.body);
   });
@@ -233,7 +234,7 @@ describe('[UNIT] DELETE /api/publicaciones/:id', () => {
     mockRun(function (sql, params, cb) {
       cb.call({ changes: 1 }, null);
     });
-    const res = await request(app).delete('/api/publicaciones/1');
+    const res = await api.delete('/api/publicaciones/1');
     expect(res.status).toBe(200);
     expect(res.body.data.deletedRows).toBe(1);
   });
@@ -245,14 +246,14 @@ describe('[UNIT] DELETE /api/publicaciones/:id', () => {
 describe('[UNIT] POST /api/admin/backup', () => {
   test('caso de éxito con datos mockup: fs.copyFile simula un respaldo exitoso', async () => {
     jest.spyOn(fs, 'copyFile').mockImplementation((src, dest, cb) => cb(null));
-    const res = await request(app).post('/api/admin/backup');
+    const res = await api.post('/api/admin/backup');
     expect(res.status).toBe(200);
     expect(res.body.data.message).toMatch(/éxito/);
   });
 
   test('escenario de fallo con datos mockup: fs.copyFile simula un error de disco', async () => {
     jest.spyOn(fs, 'copyFile').mockImplementation((src, dest, cb) => cb(new Error('ENOSPC: no space left')));
-    const res = await request(app).post('/api/admin/backup');
+    const res = await api.post('/api/admin/backup');
     expect(res.status).toBe(500);
     expectSchema(res.body);
   });
@@ -268,7 +269,7 @@ describe('[UNIT] POST /api/admin/clear', () => {
       if (typeof params === 'function') cb = params;
       if (typeof cb === 'function') cb.call({ changes: 0 }, null);
     });
-    const res = await request(app).post('/api/admin/clear');
+    const res = await api.post('/api/admin/clear');
     expect(res.status).toBe(200);
     expect(res.body.data.message).toMatch(/vaciada/);
   });

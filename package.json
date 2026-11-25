@@ -3,24 +3,43 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "test": "jest --runInBand --verbose",
-    "test:coverage": "jest --runInBand --coverage"
+    "test:coverage": "jest --runInBand --coverage",
+    "test:e2e": "playwright test",
+    "test:all": "npm run test:coverage && npm run test:e2e"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "API REST + frontend (Login, Register, CRUD de usuarios) con CI/CD, Playwright y OpenTelemetry/OpenObserve",
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api-logs": "^0.223.2",
+    "@opentelemetry/auto-instrumentations-node": "^0.81.2",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.223.2",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.223.2",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.223.2",
+    "@opentelemetry/resources": "^2.12.1",
+    "@opentelemetry/sdk-logs": "^0.223.2",
+    "@opentelemetry/sdk-metrics": "^2.12.1",
+    "@opentelemetry/sdk-node": "^0.223.2",
+    "@opentelemetry/semantic-conventions": "^1.45.0",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "sqlite3": "^6.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "jest": "^30.5.2",
     "supertest": "^7.3.0"
   },
   "jest": {
-    "collectCoverageFrom": ["index.js"],
+    "collectCoverageFrom": [
+      "index.js"
+    ],
     "coverageThreshold": {
       "global": {
         "branches": 70,
@@ -28,6 +47,13 @@
         "lines": 70,
         "statements": 70
       }
-    }
+    },
+    "roots": [
+      "<rootDir>/tests"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/helpers/"
+    ]
   }
 }

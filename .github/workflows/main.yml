@@ -5,10 +5,27 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  O2_URL: http://${{ secrets.EC2_HOST }}:5080
+  O2_USER: ${{ secrets.O2_USER }}
+  O2_PASSWORD: ${{ secrets.O2_PASSWORD }}
+  COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+  TARGET_HOST: ${{ secrets.EC2_HOST }}
 
 jobs:
+  # ========================================================================
+  # 1. Pruebas: Jest (unitarias/integración backend) + Playwright (E2E
+  #    frontend y API). Si algo falla, los jobs de build y deploy NO corren
+  #    (no hay conexión SSH a EC2) y el incidente se registra en OpenObserve.
+  # ========================================================================
   test:
-    name: Tests y cobertura
+    name: Pruebas (Jest + Playwright)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout del código
@@ -23,14 +40,41 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
-      - name: Ejecutar pruebas con cobertura (umbral 70%)
-        run: npm run test:coverage
+      - name: Pruebas backend con Jest (cobertura mínima 70%)
+        run: npx jest --runInBand --coverage --json --outputFile=jest-results.json
 
+      - name: Instalar navegador de Playwright
+        if: success() || failure()
+        run: npx playwright install --with-deps chromium
+
+      - name: Pruebas E2E con Playwright (frontend + API)
+        if: success() || failure()
+        run: npx playwright test
+
+      - name: Publicar reporte de Playwright
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Registrar resultado de pruebas en OpenObserve
+        if: always()
+        run: node scripts/notify-openobserve.js tests "${{ job.status }}"
+
+      - name: Registrar despliegue bloqueado en OpenObserve
+        if: failure() && github.event_name == 'push'
+        run: node scripts/notify-openobserve.js deploy blocked "Pruebas fallidas - no se abre conexión SSH hacia EC2"
+
+  # ========================================================================
+  # 2. Build y push de la imagen a Docker Hub (solo si las pruebas pasan)
+  # ========================================================================
   build-and-push:
     name: Build y publicar en Docker Hub
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
@@ -55,32 +99,112 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ========================================================================
+  # 3. Despliegue en AWS EC2 con Docker Compose (app + OTel Collector +
+  #    OpenObserve) y aprovisionamiento de dashboards/alertas.
+  # ========================================================================
   deploy:
     name: Desplegar en AWS EC2
     runs-on: ubuntu-latest
     needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-      - name: Conectar por SSH y actualizar el contenedor
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Copiar archivos de despliegue a EC2
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
+          source: "deploy/docker-compose.yml,deploy/otel-collector.yaml,deploy/temperature.sh"
+          target: "/home/ubuntu/webapp"
+          strip_components: 1
+
+      - name: Actualizar contenedores en EC2 (SSH)
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ github.sha }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          O2_USER: ${{ secrets.O2_USER }}
+          O2_PASSWORD: ${{ secrets.O2_PASSWORD }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME,IMAGE_TAG,JWT_SECRET,ADMIN_EMAIL,ADMIN_PASSWORD,O2_USER,O2_PASSWORD
+          command_timeout: 20m
           script: |
             set -e
-            echo "--- Espacio en disco antes de limpiar ---"
-            df -h /
-            echo "--- Limpiando imagenes y cache de Docker no usados ---"
-            sudo docker system prune -af --volumes
-            echo "--- Espacio en disco despues de limpiar ---"
-            df -h /
-            sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/webapp:latest
-            sudo docker stop webapp-container || true
-            sudo docker rm webapp-container || true
-            sudo docker run -d \
-              -p 80:80 \
-              -p 6061:6061 \
-              --restart unless-stopped \
-              --name webapp-container \
-              ${{ secrets.DOCKERHUB_USERNAME }}/webapp:latest
+            cd /home/ubuntu/webapp
+
+            # --- Preparación única del servidor (idempotente) ---
+            if ! swapon --show | grep -q /swapfile; then
+              echo "--- Creando swap de 2 GB (t3.micro tiene 1 GB de RAM) ---"
+              sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+              sudo mkswap /swapfile && sudo swapon /swapfile
+              grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+            fi
+            if ! sudo docker compose version >/dev/null 2>&1; then
+              echo "--- Instalando el plugin Docker Compose ---"
+              sudo apt-get update -y
+              sudo apt-get install -y docker-compose-v2 || sudo apt-get install -y docker-compose-plugin
+            fi
+            mkdir -p data/app data/openobserve
+
+            # --- Variables del stack (valores entre comillas simples) ---
+            O2_AUTH=$(printf '%s:%s' "$O2_USER" "$O2_PASSWORD" | base64 -w0)
+            umask 077
+            cat > .env <<EOF
+            DOCKERHUB_USERNAME='$DOCKERHUB_USERNAME'
+            IMAGE_TAG='$IMAGE_TAG'
+            JWT_SECRET='$JWT_SECRET'
+            ADMIN_EMAIL='$ADMIN_EMAIL'
+            ADMIN_PASSWORD='$ADMIN_PASSWORD'
+            O2_USER='$O2_USER'
+            O2_PASSWORD='$O2_PASSWORD'
+            O2_AUTH='$O2_AUTH'
+            HOST_NAME='ec2-webapp'
+            EOF
+            sed -i 's/^[[:space:]]*//' .env
+
+            # --- Despliegue ---
+            # Contenedor de la versión anterior (lanzado con docker run, fuera de compose)
+            if sudo docker inspect webapp-container >/dev/null 2>&1 && \
+               [ -z "$(sudo docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' webapp-container)" ]; then
+              sudo docker rm -f webapp-container
+            fi
+            sudo docker compose pull
+            sudo docker compose up -d --remove-orphans
+            sudo docker image prune -af
+            sudo docker compose ps
+
+            # --- Verificación de salud ---
+            for i in $(seq 1 30); do
+              if curl -fs http://localhost/api/status >/dev/null; then echo "App OK"; break; fi
+              sleep 2
+            done
+            curl -fs http://localhost/api/status
+
+      - name: Configurar Node.js
+        if: success()
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Aprovisionar dashboards y alertas en OpenObserve
+        if: success()
+        continue-on-error: true
+        run: |
+          for i in $(seq 1 30); do
+            curl -fs "$O2_URL/healthz" >/dev/null && break
+            echo "Esperando a OpenObserve..."; sleep 5
+          done
+          node deploy/provision-openobserve.js
+
+      - name: Registrar evento de despliegue en OpenObserve
+        if: always()
+        run: node scripts/notify-openobserve.js deploy "${{ job.status }}" "Despliegue de ${{ github.sha }} en EC2"

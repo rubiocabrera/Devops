@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Usuarios | WebApp DevOps</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <strong>Gestión de usuarios</strong>
+    <div>
+      <span id="whoami" data-testid="whoami"></span>
+      <button class="secondary small" id="logout" data-testid="logout">Cerrar sesión</button>
+    </div>
+  </header>
+  <main>
+    <section class="panel">
+      <h2 id="form-title" data-testid="form-title">Nuevo usuario</h2>
+      <form id="user-form" class="row" data-testid="user-form" novalidate>
+        <input type="hidden" id="user-id">
+        <div><label for="u-nombre">Nombre</label><input id="u-nombre" required data-testid="user-nombre"></div>
+        <div><label for="u-email">Correo</label><input id="u-email" type="email" required data-testid="user-email"></div>
+        <div><label for="u-password">Contraseña (opcional)</label><input id="u-password" type="password" data-testid="user-password"></div>
+        <button type="submit" data-testid="user-save">Guardar</button>
+        <button type="button" class="secondary" id="cancel-edit" data-testid="user-cancel">Limpiar</button>
+      </form>
+      <div class="alert" id="crud-alert" role="alert" data-testid="crud-alert"></div>
+    </section>
+    <section class="panel">
+      <h2>Usuarios registrados</h2>
+      <table data-testid="users-table">
+        <thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th></th></tr></thead>
+        <tbody id="users-body"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    if (!session.token) window.location.href = '/index.html';
+    const me = session.user;
+    document.getElementById('whoami').textContent = me ? `${me.nombre} (${me.email}) ` : '';
+
+    const form = document.getElementById('user-form');
+    const idInput = document.getElementById('user-id');
+    const nombreInput = document.getElementById('u-nombre');
+    const emailInput = document.getElementById('u-email');
+    const passInput = document.getElementById('u-password');
+    const title = document.getElementById('form-title');
+    const alertBox = document.getElementById('crud-alert');
+    const tbody = document.getElementById('users-body');
+    let users = [];
+
+    function resetForm() {
+      form.reset();
+      idInput.value = '';
+      title.textContent = 'Nuevo usuario';
+    }
+
+    async function loadUsers() {
+      const res = await apiFetch('/api/usuarios');
+      if (!res.ok) return showAlert(alertBox, res.data || 'No se pudieron cargar los usuarios');
+      users = res.data;
+      if (!users.length) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">Sin usuarios</td></tr>';
+        return;
+      }
+      tbody.innerHTML = users.map((u) => `
+        <tr data-testid="user-row" data-email="${escapeHtml(u.email)}">
+          <td>${u.id}</td>
+          <td data-testid="user-row-nombre">${escapeHtml(u.nombre)}</td>
+          <td data-testid="user-row-email">${escapeHtml(u.email)}</td>
+          <td class="actions">
+            <button class="secondary small" data-action="edit" data-id="${u.id}" data-testid="user-edit">Editar</button>
+            <button class="danger small" data-action="delete" data-id="${u.id}" data-testid="user-delete">Eliminar</button>
+          </td>
+        </tr>`).join('');
+    }
+
+    tbody.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      const user = users.find((u) => u.id === id);
+      if (btn.dataset.action === 'edit') {
+        idInput.value = id;
+        nombreInput.value = user.nombre;
+        emailInput.value = user.email;
+        title.textContent = `Editar usuario #${id}`;
+        nombreInput.focus();
+      } else if (btn.dataset.action === 'delete') {
+        if (!confirm(`¿Eliminar a ${user.nombre}?`)) return;
+        const res = await apiFetch(`/api/usuarios/${id}`, { method: 'DELETE' });
+        if (!res.ok) return showAlert(alertBox, res.data || 'No se pudo eliminar');
+        showAlert(alertBox, 'Usuario eliminado', 'success');
+        loadUsers();
+      }
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nombre = nombreInput.value.trim();
+      const email = emailInput.value.trim();
+      const password = passInput.value;
+      if (!nombre || !email) return showAlert(alertBox, 'Nombre y correo son obligatorios');
+      const id = idInput.value;
+      const res = id
+        ? await apiFetch(`/api/usuarios/${id}`, { method: 'PUT', body: { nombre, email } })
+        : await apiFetch('/api/usuarios', { method: 'POST', body: { nombre, email, password: password || undefined } });
+      if (!res.ok) return showAlert(alertBox, res.data || 'No se pudo guardar');
+      showAlert(alertBox, id ? 'Usuario actualizado' : 'Usuario creado', 'success');
+      resetForm();
+      loadUsers();
+    });
+
+    document.getElementById('cancel-edit').addEventListener('click', resetForm);
+    document.getElementById('logout').addEventListener('click', () => {
+      session.clear();
+      window.location.href = '/index.html';
+    });
+
+    loadUsers();
+  </script>
+</body>
+</html>

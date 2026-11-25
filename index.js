@@ -1,4 +1,8 @@
+// La telemetría debe cargarse ANTES que express/http para poder instrumentarlos.
+const telemetry = require('./telemetry');
 const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
@@ -6,17 +10,29 @@ const net = require('net');
 
 const app = express();
 app.use(express.json());
+app.use(telemetry.httpMetricsMiddleware);
+app.use(express.static(path.join(__dirname, 'public')));
 
 const DB_PATH = process.env.DB_PATH || './database.db';
-const db = new sqlite3.Database(DB_PATH);
+const db = telemetry.instrumentDb(new sqlite3.Database(DB_PATH));
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-cambiar-en-produccion';
+const USER_COLUMNS = 'id, nombre, email';
 
 // Inicializar BD Normalizada (Relación 1 a Muchos)
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS usuarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT
   )`);
+
+  // Migración para bases existentes creadas antes de agregar autenticación.
+  db.all('PRAGMA table_info(usuarios)', [], (err, cols) => {
+    if (!err && cols && !cols.some((c) => c.name === 'password_hash')) {
+      db.run('ALTER TABLE usuarios ADD COLUMN password_hash TEXT');
+    }
+  });
 
   db.run(`CREATE TABLE IF NOT EXISTS publicaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,9 +44,78 @@ db.serialize(() => {
 
 const formatResp = (res, statusCode, data) => res.status(statusCode).json({ statusCode, data });
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const signToken = (user) =>
+  jwt.sign({ sub: user.id, email: user.email, nombre: user.nombre }, JWT_SECRET, { expiresIn: '8h' });
+
+// Middleware: exige "Authorization: Bearer <token>" válido.
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return formatResp(res, 401, 'Token de autenticación requerido');
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (e) {
+    return formatResp(res, 401, 'Token inválido o expirado');
+  }
+}
+
+// ==========================================================================
+// AUTENTICACIÓN: Register / Login / Me
+// ==========================================================================
+app.post('/api/auth/register', async (req, res) => {
+  const { nombre, email, password } = req.body || {};
+  if (!nombre || !email || !password) {
+    return formatResp(res, 400, 'Se requieren nombre, email y password');
+  }
+  if (!EMAIL_RE.test(email)) return formatResp(res, 400, 'Email con formato inválido');
+  if (String(password).length < 6) {
+    return formatResp(res, 400, 'La contraseña debe tener al menos 6 caracteres');
+  }
+  const hash = await bcrypt.hash(String(password), 10);
+  db.run(
+    'INSERT INTO usuarios (nombre, email, password_hash) VALUES (?, ?, ?)',
+    [nombre, email, hash],
+    function (err) {
+      if (err) {
+        const msg = /UNIQUE/.test(err.message) ? 'El email ya está registrado' : err.message;
+        telemetry.log('warn', 'auth_register_failed', { email, reason: msg });
+        return formatResp(res, 409, msg);
+      }
+      const user = { id: this.lastID, nombre, email };
+      telemetry.log('info', 'auth_register_ok', { user_id: user.id, email });
+      formatResp(res, 201, { user, token: signToken(user) });
+    }
+  );
+});
+
+app.post('/api/auth/login', (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return formatResp(res, 400, 'Se requieren email y password');
+  db.get('SELECT * FROM usuarios WHERE email = ?', [email], async (err, row) => {
+    if (err) return formatResp(res, 500, err.message);
+    const ok = row && row.password_hash && (await bcrypt.compare(String(password), row.password_hash));
+    if (!ok) {
+      telemetry.log('warn', 'auth_login_failed', { email });
+      return formatResp(res, 401, 'Credenciales inválidas');
+    }
+    const user = { id: row.id, nombre: row.nombre, email: row.email };
+    telemetry.log('info', 'auth_login_ok', { user_id: user.id, email });
+    formatResp(res, 200, { user, token: signToken(user) });
+  });
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  formatResp(res, 200, { id: req.user.sub, nombre: req.user.nombre, email: req.user.email });
+});
+
+// El CRUD de usuarios requiere sesión iniciada.
+app.use('/api/usuarios', requireAuth);
+
 // 1. GET - Obtener todos los usuarios
 app.get('/api/usuarios', (req, res) => {
-  db.all('SELECT * FROM usuarios', [], (err, rows) => {
+  db.all(`SELECT ${USER_COLUMNS} FROM usuarios`, [], (err, rows) => {
     if (err) return formatResp(res, 500, err.message);
     formatResp(res, 200, rows);
   });
@@ -38,16 +123,17 @@ app.get('/api/usuarios', (req, res) => {
 
 // 2. GET - Obtener usuario por ID
 app.get('/api/usuarios/:id', (req, res) => {
-  db.get('SELECT * FROM usuarios WHERE id = ?', [req.params.id], (err, row) => {
+  db.get(`SELECT ${USER_COLUMNS} FROM usuarios WHERE id = ?`, [req.params.id], (err, row) => {
     if (err) return formatResp(res, 500, err.message);
     formatResp(res, 200, row || null);
   });
 });
 
 // 3. POST - Crear usuario
-app.post('/api/usuarios', (req, res) => {
-  const { nombre, email } = req.body;
-  db.run('INSERT INTO usuarios (nombre, email) VALUES (?, ?)', [nombre, email], function(err) {
+app.post('/api/usuarios', async (req, res) => {
+  const { nombre, email, password } = req.body;
+  const hash = password ? await bcrypt.hash(String(password), 10) : null;
+  db.run('INSERT INTO usuarios (nombre, email, password_hash) VALUES (?, ?, ?)', [nombre, email, hash], function(err) {
     if (err) return formatResp(res, 400, err.message);
     formatResp(res, 200, { id: this.lastID, nombre, email });
   });
@@ -140,9 +226,33 @@ app.post('/api/admin/clear', (req, res) => {
   });
 });
 
+// Manejador global de errores: registra la excepción (log + span) y responde 500.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  telemetry.log('error', 'unhandled_exception', {
+    error: err.message,
+    stack: err.stack,
+    'http.method': req.method,
+    'http.path': req.path,
+  });
+  formatResp(res, err.status || 500, err.expose ? err.message : 'Error interno del servidor');
+});
+
+// Usuario administrador inicial (solo si se definen las variables de entorno).
+function seedAdmin() {
+  const { ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) return;
+  const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+  db.run(
+    'INSERT OR IGNORE INTO usuarios (nombre, email, password_hash) VALUES (?, ?, ?)',
+    [process.env.ADMIN_NAME || 'Administrador', ADMIN_EMAIL, hash]
+  );
+}
+
 const PORT = process.env.PORT || 80;
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`Servidor HTTP ejecutándose en puerto ${PORT}`));
+  db.serialize(seedAdmin);
+  app.listen(PORT, () => telemetry.log('info', 'server_started', { port: Number(PORT) }));
 }
 
 // ==========================================================================

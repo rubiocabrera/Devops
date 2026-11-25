@@ -1,0 +1,71 @@
+# OpenTelemetry Collector: recibe trazas/métricas/logs OTLP de la app y
+# recolecta métricas del servidor (hostmetrics). Exporta todo a OpenObserve.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  host_metrics:
+    collection_interval: 15s
+    root_path: /hostfs
+    scrapers:
+      cpu:
+        metrics:
+          system.cpu.utilization:
+            enabled: true
+      memory:
+        metrics:
+          system.memory.utilization:
+            enabled: true
+      load: {}
+      network: {}
+      disk: {}
+      filesystem:
+        exclude_mount_points:
+          mount_points: ["/dev/*", "/proc/*", "/sys/*", "/run/*", "/var/lib/docker/*", "/snap/*"]
+          match_type: regexp
+      paging: {}
+
+processors:
+  batch:
+    timeout: 5s
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 120
+  resource/host:
+    attributes:
+      - key: host.name
+        value: ${env:HOST_NAME}
+        action: upsert
+      - key: service.name
+        value: ec2-host
+        action: insert
+
+exporters:
+  otlp_http/openobserve:
+    endpoint: http://localhost:5080/api/default
+    headers:
+      Authorization: "Basic ${env:O2_AUTH}"
+      stream-name: default
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve]
+    metrics/host:
+      receivers: [host_metrics]
+      processors: [memory_limiter, resource/host, batch]
+      exporters: [otlp_http/openobserve]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/openobserve]

@@ -1,0 +1,35 @@
+:root{--bg:#f4f6fb;--card:#fff;--text:#1d2433;--muted:#667085;--primary:#1f5fbf;--primary-d:#174a96;--danger:#c0392b;--ok:#1e8e5a;--border:#d9dee8}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+.center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:32px;width:100%;max-width:400px;box-shadow:0 4px 18px rgba(16,24,40,.06)}
+h1{font-size:1.5rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 24px;font-size:.95rem}
+label{display:block;font-size:.85rem;font-weight:600;margin:14px 0 6px}
+input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:.95rem}
+input:focus{outline:2px solid var(--primary);outline-offset:-1px;border-color:transparent}
+button{cursor:pointer;border:0;border-radius:8px;padding:10px 16px;font-size:.95rem;font-weight:600;background:var(--primary);color:#fff}
+button:hover{background:var(--primary-d)}
+button.secondary{background:#e8edf6;color:var(--text)}
+button.danger{background:var(--danger)}
+button.small{padding:6px 10px;font-size:.85rem}
+.full{width:100%;margin-top:22px}
+.alert{margin-top:16px;padding:10px 12px;border-radius:8px;font-size:.9rem;display:none}
+.alert.show{display:block}
+.alert.error{background:#fdecea;color:var(--danger)}
+.alert.success{background:#e7f6ee;color:var(--ok)}
+.foot{margin-top:18px;text-align:center;font-size:.9rem;color:var(--muted)}
+a{color:var(--primary)}
+header.top{background:var(--card);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;justify-content:space-between;align-items:center}
+header.top strong{font-size:1.1rem}
+main{max-width:980px;margin:28px auto;padding:0 20px}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px;margin-bottom:22px}
+.panel h2{margin:0 0 14px;font-size:1.15rem}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr auto auto;gap:10px;align-items:end}
+.row label{margin-top:0}
+table{width:100%;border-collapse:collapse;font-size:.93rem}
+th,td{text-align:left;padding:10px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
+td.actions{display:flex;gap:6px;justify-content:flex-end}
+.empty{color:var(--muted);text-align:center;padding:18px}
+@media (max-width:720px){.row{grid-template-columns:1fr}}
