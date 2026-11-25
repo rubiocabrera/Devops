@@ -142,9 +142,13 @@ jobs:
             cd /home/ubuntu/webapp
 
             # --- Preparación única del servidor (idempotente) ---
+            # Un swap de 2 GB de un intento anterior se reduce a 1 GB (disco de 8 GB).
+            if [ -f /swapfile ] && [ "$(stat -c %s /swapfile)" -gt 1200000000 ]; then
+              sudo swapoff /swapfile && sudo rm -f /swapfile
+            fi
             if ! swapon --show | grep -q /swapfile; then
-              echo "--- Creando swap de 2 GB (t3.micro tiene 1 GB de RAM) ---"
-              sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+              echo "--- Creando swap de 1 GB (t3.micro tiene 1 GB de RAM) ---"
+              sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
               sudo mkswap /swapfile && sudo swapon /swapfile
               grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
             fi
@@ -170,6 +174,19 @@ jobs:
             HOST_NAME='ec2-webapp'
             EOF
             sed -i 's/^[[:space:]]*//' .env
+
+            # --- Espacio en disco: limpiar Docker ANTES de descargar imágenes ---
+            echo "--- Disco antes de limpiar ---"; df -h /
+            sudo docker system prune -af
+            sudo docker builder prune -af || true
+            sudo apt-get clean || true
+            sudo journalctl --vacuum-size=50M || true
+            echo "--- Disco después de limpiar ---"; df -h /
+            FREE_MB=$(df -m --output=avail / | tail -1)
+            if [ "$FREE_MB" -lt 2000 ]; then
+              echo "ERROR: solo hay ${FREE_MB} MB libres; se necesitan ~2 GB. Aumenta el volumen EBS de la instancia."
+              exit 1
+            fi
 
             # --- Despliegue ---
             # Contenedor de la versión anterior (lanzado con docker run, fuera de compose)
