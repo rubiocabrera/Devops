@@ -177,6 +177,8 @@ jobs:
             sed -i 's/^[[:space:]]*//' .env
 
             # --- Espacio en disco: limpiar Docker ANTES de descargar imágenes ---
+            # OpenObserve, el collector y curl ya quedan en caché tras el primer
+            # despliegue; una actualización solo baja las capas nuevas de la app.
             echo "--- Disco antes de limpiar ---"; df -h /
             sudo docker system prune -af
             sudo docker builder prune -af || true
@@ -184,8 +186,8 @@ jobs:
             sudo journalctl --vacuum-size=50M || true
             echo "--- Disco después de limpiar ---"; df -h /
             FREE_MB=$(df -m --output=avail / | tail -1)
-            if [ "$FREE_MB" -lt 2000 ]; then
-              echo "ERROR: solo hay ${FREE_MB} MB libres; se necesitan ~2 GB. Aumenta el volumen EBS de la instancia."
+            if [ "$FREE_MB" -lt 400 ]; then
+              echo "ERROR: solo hay ${FREE_MB} MB libres; se necesitan al menos 400 MB para actualizar la imagen de la app."
               exit 1
             fi
 
