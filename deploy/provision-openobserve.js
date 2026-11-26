@@ -221,17 +221,20 @@ const DASHBOARDS = [
 
 // --------------------------------------------------------------------------
 // Alertas (programadas, evaluadas con SQL cada minuto)
+// OpenObserve dispara cuando la consulta devuelve más filas que `threshold`.
+// Un count(*) siempre devuelve una fila, así que la condición real va en HAVING
+// y threshold queda en 0 (dispara solo si la consulta devuelve alguna fila).
 // --------------------------------------------------------------------------
 const ALERTS = [
   {
     name: 'api_tasa_errores_5xx', stream: 'default', streamType: 'logs',
-    sql: `SELECT count(*) AS errores FROM "default" WHERE body = 'http_request' AND http_status_code >= 500`,
-    threshold: 3, period: 5, description: 'Más de 3 respuestas 5xx en 5 minutos',
+    sql: `SELECT count(*) AS errores FROM "default" WHERE body = 'http_request' AND http_status_code >= 500 HAVING count(*) > 3`,
+    threshold: 0, period: 5, description: 'Más de 3 respuestas 5xx en 5 minutos',
   },
   {
     name: 'api_latencia_alta', stream: 'default', streamType: 'logs',
-    sql: `SELECT count(*) AS lentas FROM "default" WHERE body = 'http_request' AND duration_ms > 1000`,
-    threshold: 5, period: 5, description: 'Más de 5 peticiones con latencia > 1 s en 5 minutos',
+    sql: `SELECT count(*) AS lentas FROM "default" WHERE body = 'http_request' AND duration_ms > 1000 HAVING count(*) > 5`,
+    threshold: 0, period: 5, description: 'Más de 5 peticiones con latencia > 1 s en 5 minutos',
   },
   {
     name: 'ec2_cpu_alta', stream: 'system_cpu_utilization', streamType: 'metrics',
@@ -245,7 +248,7 @@ const ALERTS = [
   },
   {
     name: 'cicd_pruebas_fallidas', stream: 'cicd_pipeline', streamType: 'logs',
-    sql: `SELECT count(*) AS fallos FROM "cicd_pipeline" WHERE event = 'tests' AND status = 'failure'`,
+    sql: `SELECT count(*) AS fallos FROM "cicd_pipeline" WHERE event = 'tests' AND status = 'failure' HAVING count(*) > 0`,
     threshold: 0, period: 10, description: 'El pipeline reportó pruebas fallidas (despliegue bloqueado)',
   },
 ];
