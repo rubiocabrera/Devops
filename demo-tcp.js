@@ -1,7 +1,10 @@
 const net = require('net');
 
-const HOST = '100.22.29.28';
-const PORT = 6061;
+// Host y puerto del servidor TCP: se pasan por variables de entorno para no
+// dejar la IP del servidor escrita en el código público.
+//   TCP_HOST=<IP_EC2> node demo-tcp.js
+const HOST = process.env.TCP_HOST || 'localhost';
+const PORT = Number(process.env.TCP_PORT || 6061);
 
 const email = `demo${Date.now()}@test.com`;
 

@@ -24,6 +24,9 @@ receivers:
       network: {}
       disk: {}
       filesystem:
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
         exclude_mount_points:
           mount_points: ["/dev/*", "/proc/*", "/sys/*", "/run/*", "/var/lib/docker/*", "/snap/*"]
           match_type: regexp

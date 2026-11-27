@@ -121,3 +121,14 @@ describe('Protección con JWT', () => {
     expect(login.status).toBe(200);
   });
 });
+
+describe('Manejo global de excepciones', () => {
+  test('un JSON malformado lo atrapa el manejador de errores y responde 400', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Content-Type', 'application/json')
+      .send('{"email": "roto@uteq.edu.mx", "password": ');
+    expect(res.status).toBe(400);
+    expect(res.body.statusCode).toBe(400);
+  });
+});

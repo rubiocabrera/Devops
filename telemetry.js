@@ -120,9 +120,14 @@ function httpMetricsMiddleware(req, res, next) {
     latencyHistogram.record(durationMs, attrs);
     if (res.statusCode >= 400) errorCounter.add(1, attrs);
     if (attrs['http.route'] !== 'static') {
+      const ms = Math.round(durationMs * 100) / 100;
+      const path = (req.originalUrl || req.url || '').split('?')[0];
       log(res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info', 'http_request', {
         ...attrs,
-        duration_ms: Math.round(durationMs * 100) / 100,
+        'http.target': path,
+        duration_ms: ms,
+        // Resumen legible de la petición para la vista de Logs de OpenObserve.
+        resumen: `${req.method} ${path} -> ${res.statusCode} (${ms} ms)`,
       });
     }
   });
@@ -164,4 +169,12 @@ function instrumentDb(db) {
   return db;
 }
 
-module.exports = { enabled, log, httpMetricsMiddleware, instrumentDb };
+// Marca el span activo de la petición con la excepción (aparece en la traza).
+function recordException(err) {
+  const span = api.trace.getActiveSpan();
+  if (!span) return;
+  span.recordException(err);
+  span.setStatus({ code: api.SpanStatusCode.ERROR, message: err.message });
+}
+
+module.exports = { enabled, log, httpMetricsMiddleware, instrumentDb, recordException };

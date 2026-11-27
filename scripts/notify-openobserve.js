@@ -41,14 +41,71 @@ function testCounts() {
   return counts;
 }
 
+// Nombres de las pruebas que fallaron (Jest y Playwright), para el mensaje.
+function failedTests() {
+  const names = [];
+  const jest = readJson('jest-results.json');
+  for (const suite of (jest && jest.testResults) || []) {
+    for (const t of suite.assertionResults || []) {
+      if (t.status === 'failed') names.push(`Jest: ${t.fullName || t.title}`);
+    }
+  }
+  const walk = (suite, parents) => {
+    const path = suite.title && !suite.title.endsWith('.js') ? [...parents, suite.title] : parents;
+    for (const spec of suite.specs || []) {
+      for (const t of spec.tests || []) {
+        if (t.status === 'unexpected') names.push(`Playwright [${t.projectName}]: ${[...path, spec.title].join(' > ')}`);
+      }
+    }
+    for (const child of suite.suites || []) walk(child, path);
+  };
+  const pw = readJson('playwright-report/results.json');
+  for (const suite of (pw && pw.suites) || []) walk(suite, []);
+  return names;
+}
+
+const sha = (env.GITHUB_SHA || '').slice(0, 7);
+const commitMessage = (env.COMMIT_MESSAGE || '').split('\n')[0].slice(0, 200);
+const host = env.TARGET_HOST || 'EC2';
+const withCounts = event === 'tests' || status === 'blocked';
+const counts = withCounts ? testCounts() : {};
+const failed = withCounts ? failedTests() : [];
+
+// Mensaje legible y completo del evento (lo que se ve en la columna "message").
+function buildMessage() {
+  const who = `rama ${env.GITHUB_REF_NAME || '?'}, por ${env.GITHUB_ACTOR || '?'}`;
+  const resumen = counts.tests_total !== undefined
+    ? `Jest ${counts.jest_passed ?? 0}/${counts.jest_total ?? 0} aprobadas, ` +
+      `Playwright ${counts.playwright_passed ?? 0}/${counts.playwright_total ?? 0} aprobadas`
+    : '';
+  const fallas = failed.length ? ` Fallaron: ${failed.slice(0, 5).join('; ')}.` : '';
+  const commit = commitMessage ? ` Commit: "${commitMessage}".` : '';
+  let texto;
+  if (event === 'tests') {
+    texto = status === 'success'
+      ? `Pruebas APROBADAS en ${sha} (${who}): ${resumen}.${commit}`
+      : `Pruebas FALLIDAS en ${sha} (${who}): ${resumen}.${fallas}${commit}`;
+  } else if (status === 'blocked') {
+    texto = `Despliegue BLOQUEADO de ${sha} (${who}): las pruebas fallaron (${resumen}), ` +
+      `por lo que no se abrió la conexión SSH hacia ${host}.${fallas}${commit}`;
+  } else if (status === 'success') {
+    texto = `Despliegue EXITOSO de ${sha} en ${host} (${who}): contenedores actualizados con la ` +
+      `imagen webapp:${env.GITHUB_SHA || sha} y verificación de salud correcta.${commit}`;
+  } else {
+    texto = `Despliegue ${status.toUpperCase()} de ${sha} en ${host} (${who}).${commit}`;
+  }
+  return message ? `${texto} ${message}` : texto;
+}
+
 const record = {
   _timestamp: new Date().toISOString(),
   event,
   status,
-  message,
+  message: buildMessage(),
+  failed_tests: failed.join(' | '),
   commit: env.GITHUB_SHA || '',
-  commit_short: (env.GITHUB_SHA || '').slice(0, 7),
-  commit_message: (env.COMMIT_MESSAGE || '').split('\n')[0].slice(0, 200),
+  commit_short: sha,
+  commit_message: commitMessage,
   branch: env.GITHUB_REF_NAME || '',
   actor: env.GITHUB_ACTOR || '',
   trigger: env.GITHUB_EVENT_NAME || '',
@@ -61,7 +118,7 @@ const record = {
     ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
     : '',
   target_host: env.TARGET_HOST || '',
-  ...(event === 'tests' ? testCounts() : {}),
+  ...counts,
 };
 
 (async () => {

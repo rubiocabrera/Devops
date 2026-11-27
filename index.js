@@ -229,13 +229,18 @@ app.post('/api/admin/clear', (req, res) => {
 // Manejador global de errores: registra la excepción (log + span) y responde 500.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  const status = err.status || err.statusCode || 500;
+  telemetry.recordException(err);
   telemetry.log('error', 'unhandled_exception', {
     error: err.message,
+    error_type: err.name,
     stack: err.stack,
     'http.method': req.method,
     'http.path': req.path,
+    'http.status_code': status,
+    resumen: `Excepción ${err.name} en ${req.method} ${req.path}: ${err.message}`,
   });
-  formatResp(res, err.status || 500, err.expose ? err.message : 'Error interno del servidor');
+  formatResp(res, status, err.expose ? err.message : 'Error interno del servidor');
 });
 
 // Usuario administrador inicial (solo si se definen las variables de entorno).
